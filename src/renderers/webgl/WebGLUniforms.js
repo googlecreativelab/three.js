@@ -47,6 +47,7 @@
  *
  */
 
+import { ProgressiveTexture } from '../../textures/ProgressiveTexture';
 import { CubeTexture } from '../../textures/CubeTexture';
 import { Texture } from '../../textures/Texture';
 
