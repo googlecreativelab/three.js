@@ -24189,7 +24189,7 @@
 		this.data = new Uint8Array( this.size * this.size * 3 );
 		this.dataOffsetY = 0;
 
-		this.image = { data: this.data, width: this.size, height: this.size };
+		this.image = { width: this.size, height: this.size };
 
 		this.uploaded = false;
 		this.loaded = false;
