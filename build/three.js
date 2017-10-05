@@ -18064,30 +18064,102 @@
 
 			}
 
-			state.activeTexture( _gl.TEXTURE0 + slot );
-			state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
+			if ( !texture.isProgressiveTexture ) {
+				state.activeTexture( _gl.TEXTURE0 + slot );
+				state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
 
-			_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
-			_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
-			_gl.pixelStorei( _gl.UNPACK_ALIGNMENT, texture.unpackAlignment );
+				_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
+				_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
+				_gl.pixelStorei( _gl.UNPACK_ALIGNMENT, texture.unpackAlignment );
 
-			var image = clampToMaxSize( texture.image, capabilities.maxTextureSize );
+				var image = clampToMaxSize( texture.image, capabilities.maxTextureSize );
 
-			if ( textureNeedsPowerOfTwo( texture ) && isPowerOfTwo( image ) === false ) {
+				if ( textureNeedsPowerOfTwo( texture ) && isPowerOfTwo( image ) === false ) {
 
-				image = makePowerOfTwo( image );
+					image = makePowerOfTwo( image );
 
+				}
+
+				var isPowerOfTwoImage = isPowerOfTwo( image ),
+				glFormat = paramThreeToGL( texture.format ),
+				glType = paramThreeToGL( texture.type );
+
+				setTextureParameters( _gl.TEXTURE_2D, texture, isPowerOfTwoImage );
 			}
-
-			var isPowerOfTwoImage = isPowerOfTwo( image ),
-			glFormat = paramThreeToGL( texture.format ),
-			glType = paramThreeToGL( texture.type );
-
-			setTextureParameters( _gl.TEXTURE_2D, texture, isPowerOfTwoImage );
 
 			var mipmap, mipmaps = texture.mipmaps;
 
-			if ( texture.isDepthTexture ) {
+			if ( texture.isProgressiveTexture ) {
+
+				if ( !texture.uploaded ) {
+
+					state.activeTexture( _gl.TEXTURE0 + slot );
+					state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
+
+					_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
+					_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
+
+					_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MAG_FILTER, _gl.LINEAR );
+					_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MIN_FILTER, _gl.LINEAR_MIPMAP_LINEAR);
+					_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_S, _gl.CLAMP_TO_EDGE );
+	    			_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_T, _gl.CLAMP_TO_EDGE );
+					_gl.texImage2D( _gl.TEXTURE_2D, 0, _gl.RGB, texture.size, texture.size, 0, _gl.RGB, _gl.UNSIGNED_BYTE, texture.data );
+					_gl.generateMipmap( _gl.TEXTURE_2D );
+						
+					texture.uploaded = true;
+
+				} else { 
+		    		
+		    		if ( texture.data ) {
+			
+						if ( texture.data.length > 0 ) {
+
+							state.activeTexture( _gl.TEXTURE0 + slot );
+							state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
+
+							_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
+							_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
+
+							_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MAG_FILTER, _gl.LINEAR );
+							_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MIN_FILTER, _gl.LINEAR_MIPMAP_LINEAR);
+							_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_S, _gl.CLAMP_TO_EDGE );
+				    		_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_T, _gl.CLAMP_TO_EDGE );
+
+				    		// console.log( texture.dataOffsetY, texture.size, texture.dataSegment );
+
+							state.texSubImage2D( _gl.TEXTURE_2D, 0, 0, texture.dataOffsetY, texture.size, 32, _gl.RGB, _gl.UNSIGNED_BYTE, texture.data.subarray( 0, texture.dataSegment ) );
+
+							texture.data = texture.data.subarray( texture.dataSegment, texture.data.length );
+
+							texture.dataOffsetY -= 32;
+
+							_gl.generateMipmap( _gl.TEXTURE_2D );
+
+							if ( texture.nPasses == 2 && texture.dataOffsetY < 0 ) {
+
+								texture.displayComplete();
+
+							} else if ( texture.loaded && texture.dataOffsetY < 0 ) {
+								
+								texture.firstPassComplete = true;
+
+							}
+
+						} else {
+
+							state.activeTexture( _gl.TEXTURE0 + slot );
+							state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
+
+							texture.needsUpdate = false;
+							
+						}
+
+					}
+
+				}
+
+
+			} else if ( texture.isDepthTexture ) {
 
 				// populate depth texture with dummy data
 
@@ -18219,11 +18291,15 @@
 
 			}
 
-			if ( texture.generateMipmaps && isPowerOfTwoImage ) _gl.generateMipmap( _gl.TEXTURE_2D );
+			if ( !texture.isProgressiveTexture ) {
+			
+				if ( texture.generateMipmaps && isPowerOfTwoImage ) _gl.generateMipmap( _gl.TEXTURE_2D );
 
-			textureProperties.__version = texture.version;
+				textureProperties.__version = texture.version;
 
-			if ( texture.onUpdate ) texture.onUpdate( texture );
+				if ( texture.onUpdate ) texture.onUpdate( texture );
+
+			}
 
 		}
 
@@ -19348,6 +19424,20 @@
 
 		}
 
+		function texSubImage2D() {
+
+			try {
+
+				gl.texSubImage2D.apply( gl, arguments );
+
+			} catch ( error ) {
+
+				console.error( error );
+
+			}
+
+		}
+
 		//
 
 		function scissor( scissor ) {
@@ -19446,6 +19536,7 @@
 			bindTexture: bindTexture,
 			compressedTexImage2D: compressedTexImage2D,
 			texImage2D: texImage2D,
+			texSubImage2D: texSubImage2D,
 
 			scissor: scissor,
 			viewport: viewport,
@@ -24087,6 +24178,167 @@
 	DepthTexture.prototype = Object.create( Texture.prototype );
 	DepthTexture.prototype.constructor = DepthTexture;
 	DepthTexture.prototype.isDepthTexture = true;
+
+	function ProgressiveTexture( size, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy ) {
+
+		Texture.call( this, null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy );
+
+		this.size = size;
+		this.dataSegment = this.size * this.size * 3;
+
+		this.data = new Uint8Array( this.size * this.size * 3 );
+		this.dataOffsetY = 0;
+
+		this.image = { data: this.data, width: this.size, height: this.size };
+
+		this.uploaded = false;
+		this.loaded = false;
+		this.firstPassComplete = false;
+		this.displayed = false;
+		this.busy = false;
+		this.generateMipmaps = false;
+		this.premultiplyAlpha = false;
+		this.needsUpdate = true;
+		this.nPasses = 0;
+
+		this.xhr = new XMLHttpRequest();
+		this.xhr.addEventListener( 'progress', this.onProgress.bind( this ), false );
+		this.xhr.addEventListener( 'load', this.onLoad.bind( this ), false );
+		this.xhr.overrideMimeType( 'text/plain; charset=x-user-defined' );
+	}
+
+	function onDisplayComplete( callback ) {
+
+		if ( !this.displayed ) {
+
+			this.displayCompleteCallback = callback;
+
+		} else {
+
+			callback( this );
+
+		}
+
+	}
+
+	function loadWithWorker( worker ) {
+
+		this.initWorker( worker );
+		
+		this.data = null;
+		this.xhr.open( 'GET', this.url );
+		this.xhr.send();
+
+	}
+
+	function initWorker( worker ) {
+
+		this.worker = worker;
+		this.busy = false;
+
+	}
+
+	function onWorkerMessage( event ) {
+
+		this.data = event.data;
+		this.dataSegment = this.size * 32 * 3;
+		this.dataOffsetY = this.size - 32;
+		this.busy = false;
+
+		this.nPasses++;
+
+		if ( this.loaded ) {
+
+			if ( this.onloadedCallback ) {
+
+				this.onloadedCallback( this );
+
+			}
+
+		}
+
+	}
+
+	function onProgress( event ) {
+
+		if ( !this.busy ) {
+
+			var msg = {
+
+				size: this.size,
+				data: ( this.xhr.mozResponseArrayBuffer || this.xhr.mozResponse || this.xhr.responseArrayBuffer || this.xhr.response )
+
+			};
+
+	        if ( this.data == null || this.data.length == 0 ) {
+	            
+	            this.worker.postMessage = this.worker.webkitPostMessage || this.worker.postMessage;
+	            this.worker.postMessage( msg ); 
+	            this.busy = true;
+
+	        }
+
+		}
+
+	}
+
+	function onLoad( event ) {
+
+		var msg = {
+
+			size: this.size,
+			data: ( this.xhr.mozResponseArrayBuffer || this.xhr.mozResponse || this.xhr.responseArrayBuffer || this.xhr.response )
+
+		};
+		
+		this.loaded = true;
+
+		this.worker.postMessage = this.worker.webkitPostMessage || this.worker.postMessage;
+	    this.worker.postMessage( msg ); 
+
+	}
+
+	function onLoadComplete( callback ) {
+
+		if ( this.loaded ) {
+			
+			callback( this );
+
+		} else {
+
+			this.onloadedCallback = callback;
+
+		}
+
+	}
+
+	function displayComplete() {
+
+		if ( !this.displayed ) {
+
+			this.displayed = true;	
+
+			if ( this.displayCompleteCallback ) {
+
+				this.displayCompleteCallback( this );
+
+			}
+
+		}
+
+	}
+
+	ProgressiveTexture.prototype = Object.create( Texture.prototype );
+	ProgressiveTexture.prototype.constructor = ProgressiveTexture;
+	ProgressiveTexture.prototype.initWorker = initWorker;
+	ProgressiveTexture.prototype.onProgress = onProgress;
+	ProgressiveTexture.prototype.onWorkerMessage = onWorkerMessage;
+	ProgressiveTexture.prototype.onLoadComplete = onLoadComplete;
+	ProgressiveTexture.prototype.onLoad = onLoad;
+	ProgressiveTexture.prototype.onDisplayComplete = onDisplayComplete;
+	ProgressiveTexture.prototype.displayComplete = displayComplete;
+	ProgressiveTexture.prototype.loadWithWorker = loadWithWorker;
+	ProgressiveTexture.prototype.isProgressiveTexture = true;
 
 	/**
 	 * @author mrdoob / http://mrdoob.com/
@@ -42945,6 +43197,7 @@
 	exports.CubeTexture = CubeTexture;
 	exports.CanvasTexture = CanvasTexture;
 	exports.DepthTexture = DepthTexture;
+	exports.ProgressiveTexture = ProgressiveTexture;
 	exports.Texture = Texture;
 	exports.CompressedTextureLoader = CompressedTextureLoader;
 	exports.DataTextureLoader = DataTextureLoader;
