@@ -511,35 +511,86 @@ function WebGLTextures( _gl, extensions, state, properties, capabilities, utils,
 			info.memory.textures ++;
 
 		}
-		state.activeTexture( _gl.TEXTURE0 + slot );
+
+		if ( !texture.isProgressiveTexture ) {
+			state.activeTexture( _gl.TEXTURE0 + slot );
 
 
-		state.bindTexture( textureType, textureProperties.__webglTexture );
+			state.bindTexture( textureType, textureProperties.__webglTexture );
 
 
 
-		_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
-		_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
-		_gl.pixelStorei( _gl.UNPACK_ALIGNMENT, texture.unpackAlignment );
+			_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
+			_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
+			_gl.pixelStorei( _gl.UNPACK_ALIGNMENT, texture.unpackAlignment );
 
-		var image = clampToMaxSize( texture.image, capabilities.maxTextureSize );
+			var image = clampToMaxSize( texture.image, capabilities.maxTextureSize );
 
-		if ( textureNeedsPowerOfTwo( texture ) && isPowerOfTwo( image ) === false ) {
+			if ( textureNeedsPowerOfTwo( texture ) && isPowerOfTwo( image ) === false ) {
 
-			image = makePowerOfTwo( image );
+				image = makePowerOfTwo( image );
+
+			}
+
+			var isPowerOfTwoImage = isPowerOfTwo( image ),
+				glFormat = utils.convert( texture.format ),
+				glType = utils.convert( texture.type ),
+				glInternalFormat = getInternalFormat( glFormat, glType );
+
+			setTextureParameters( textureType, texture, isPowerOfTwoImage );
 
 		}
 
-		var isPowerOfTwoImage = isPowerOfTwo( image ),
-			glFormat = utils.convert( texture.format ),
-			glType = utils.convert( texture.type ),
-			glInternalFormat = getInternalFormat( glFormat, glType );
-
-		setTextureParameters( textureType, texture, isPowerOfTwoImage );
-
 		var mipmap, mipmaps = texture.mipmaps;
 
-		if ( texture.isDepthTexture ) {
+		if ( texture.isProgressiveTexture ) {
+
+	 			if ( !texture.uploaded ) {
+	 				state.activeTexture( _gl.TEXTURE0 + slot );
+					state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
+	 				_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
+					_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
+	 				_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MAG_FILTER, _gl.LINEAR );
+					_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MIN_FILTER, _gl.LINEAR_MIPMAP_LINEAR);
+					_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_S, _gl.CLAMP_TO_EDGE );
+	    			_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_T, _gl.CLAMP_TO_EDGE );
+					_gl.texImage2D( _gl.TEXTURE_2D, 0, _gl.RGB, texture.size, texture.size, 0, _gl.RGB, _gl.UNSIGNED_BYTE, texture.data );
+					_gl.generateMipmap( _gl.TEXTURE_2D );
+
+					texture.uploaded = true;
+	 			} else {
+
+		    		if ( texture.data ) {
+
+						if ( texture.data.length > 0 ) {
+	 						state.activeTexture( _gl.TEXTURE0 + slot );
+							state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
+	 						_gl.pixelStorei( _gl.UNPACK_FLIP_Y_WEBGL, texture.flipY );
+							_gl.pixelStorei( _gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, texture.premultiplyAlpha );
+	 						_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MAG_FILTER, _gl.LINEAR );
+							_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_MIN_FILTER, _gl.LINEAR_MIPMAP_LINEAR);
+							_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_S, _gl.CLAMP_TO_EDGE );
+				    		_gl.texParameteri( _gl.TEXTURE_2D, _gl.TEXTURE_WRAP_T, _gl.CLAMP_TO_EDGE );
+	 			    		// console.log( texture.dataOffsetY, texture.size, texture.dataSegment );
+	 						state.texSubImage2D( _gl.TEXTURE_2D, 0, 0, texture.dataOffsetY, texture.size, 32, _gl.RGB, _gl.UNSIGNED_BYTE, texture.data.subarray( 0, texture.dataSegment ) );
+	 						texture.data = texture.data.subarray( texture.dataSegment, texture.data.length );
+	 						texture.dataOffsetY -= 32;
+	 						_gl.generateMipmap( _gl.TEXTURE_2D );
+	 						if ( texture.nPasses == 2 && texture.dataOffsetY < 0 ) {
+	 							texture.displayComplete();
+	 						} else if ( texture.loaded && texture.dataOffsetY < 0 ) {
+
+								texture.firstPassComplete = true;
+	 						}
+	 					} else {
+	 						state.activeTexture( _gl.TEXTURE0 + slot );
+							state.bindTexture( _gl.TEXTURE_2D, textureProperties.__webglTexture );
+	 						texture.needsUpdate = false;
+
+						}
+	 				}
+	 			}
+	 		} else if ( texture.isDepthTexture ) {
 
 			// populate depth texture with dummy data
 
@@ -682,15 +733,19 @@ function WebGLTextures( _gl, extensions, state, properties, capabilities, utils,
 
 		}
 
-		if ( textureNeedsGenerateMipmaps( texture, isPowerOfTwoImage ) ) {
+		if ( !texture.isProgressiveTexture ) {
 
-			generateMipmap( _gl.TEXTURE_2D, texture, image.width, image.height );
+			if ( textureNeedsGenerateMipmaps( texture, isPowerOfTwoImage ) ) {
+
+				generateMipmap( _gl.TEXTURE_2D, texture, image.width, image.height );
+
+			}
+
+			textureProperties.__version = texture.version;
+
+			if ( texture.onUpdate ) texture.onUpdate( texture );
 
 		}
-
-		textureProperties.__version = texture.version;
-
-		if ( texture.onUpdate ) texture.onUpdate( texture );
 
 	}
 

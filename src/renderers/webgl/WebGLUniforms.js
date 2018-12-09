@@ -49,6 +49,7 @@
  *
  */
 
+import { ProgressiveTexture } from '../../textures/ProgressiveTexture';
 import { CubeTexture } from '../../textures/CubeTexture.js';
 import { Texture } from '../../textures/Texture.js';
 import { DataTexture3D } from '../../textures/DataTexture3D.js';

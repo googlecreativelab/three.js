@@ -871,6 +871,14 @@ function WebGLState( gl, extensions, utils, capabilities ) {
 
 	}
 
+	function texSubImage2D() {
+	 	try {
+	 		gl.texSubImage2D.apply( gl, arguments );
+	 	} catch ( error ) {
+	 		console.error( error );
+	 	}
+	}
+
 	//
 
 	function scissor( scissor ) {
@@ -963,6 +971,7 @@ function WebGLState( gl, extensions, utils, capabilities ) {
 		bindTexture: bindTexture,
 		compressedTexImage2D: compressedTexImage2D,
 		texImage2D: texImage2D,
+		texSubImage2D: texSubImage2D,
 		texImage3D: texImage3D,
 
 		scissor: scissor,
