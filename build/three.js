@@ -2,7 +2,7 @@
 	typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
 	typeof define === 'function' && define.amd ? define(['exports'], factory) :
 	(global = global || self, factory(global.THREE = {}));
-}(this, function (exports) { 'use strict';
+}(this, (function (exports) { 'use strict';
 
 	// Polyfills
 
@@ -16490,6 +16490,113 @@
 
 	}
 
+	function ProgressiveTexture( size, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy ) {
+	  Texture.call( this, null, mapping, wrapS, wrapT, magFilter, minFilter, format, type, anisotropy );
+	  this.size = size;
+	  this.dataSegment = this.size * this.size * 3;
+	  this.data = new Uint8Array( this.size * this.size * 3 );
+	  this.dataOffsetY = 0;
+	  this.image = { data: this.data, width: this.size, height: this.size };
+	  this.uploaded = false;
+	  this.loaded = false;
+	  this.firstPassComplete = false;
+	  this.displayed = false;
+	  this.busy = false;
+	  this.generateMipmaps = false;
+	  this.premultiplyAlpha = false;
+	  this.needsUpdate = true;
+	  this.nPasses = 0;
+	  this.xhr = new XMLHttpRequest();
+	  this.xhr.addEventListener( 'progress', this.onProgress.bind( this ), false );
+	  this.xhr.addEventListener( 'load', this.onLoad.bind( this ), false );
+	  this.xhr.overrideMimeType( 'text/plain; charset=x-user-defined' );
+	 }
+	 function onDisplayComplete( callback ) {
+	  if ( !this.displayed ) {
+	    this.displayCompleteCallback = callback;
+	  } else {
+	    callback( this );
+	  }
+	 }
+	 function loadWithWorker( worker ) {
+	  this.initWorker( worker );
+
+	  this.data = null;
+	  this.xhr.open( 'GET', this.url );
+	  this.xhr.send();
+	 }
+	 function initWorker( worker ) {
+	  this.worker = worker;
+	  this.busy = false;
+	 }
+	 function onWorkerMessage( event ) {
+	  this.data = event.data;
+	  this.dataSegment = this.size * 32 * 3;
+	  this.dataOffsetY = this.size - 32;
+	  this.busy = false;
+	  this.nPasses++;
+	  // console.log( 'new data offset: ' + this.dataOffsetY );
+	  if ( this.loaded ) {
+	    // console.log( 'loaded pass start' );
+	    if ( this.onloadedCallback ) {
+	      this.onloadedCallback( this );
+	    }
+	  }
+	 }
+	 function onProgress( event ) {
+	  if ( !this.busy ) {
+	    var msg = {
+	      size: this.size,
+	      data: ( this.xhr.mozResponseArrayBuffer || this.xhr.mozResponse || this.xhr.responseArrayBuffer || this.xhr.response )
+	    };
+	         if ( this.data == null || this.data.length == 0 ) {
+
+	            this.worker.postMessage = this.worker.webkitPostMessage || this.worker.postMessage;
+	            this.worker.postMessage( msg );
+	            this.busy = true;
+	         }
+	  }
+	 }
+	 function onLoad( event ) {
+	  var msg = {
+	    size: this.size,
+	    data: ( this.xhr.mozResponseArrayBuffer || this.xhr.mozResponse || this.xhr.responseArrayBuffer || this.xhr.response )
+	  };
+
+	  this.loaded = true;
+	  // console.log( 'on load complete' );
+	  this.worker.postMessage = this.worker.webkitPostMessage || this.worker.postMessage;
+	    this.worker.postMessage( msg );
+	 }
+	 function onLoadComplete( callback ) {
+	  if ( this.loaded ) {
+
+	    callback( this );
+	  } else {
+	    this.onloadedCallback = callback;
+	  }
+	 }
+	 function displayComplete() {
+	  if ( !this.displayed ) {
+	    this.displayed = true;
+	    if ( this.displayCompleteCallback ) {
+	      this.displayCompleteCallback( this );
+	    }
+	  }
+	 }
+
+	ProgressiveTexture.prototype = Object.create( Texture.prototype );
+	ProgressiveTexture.prototype.constructor = ProgressiveTexture;
+	ProgressiveTexture.prototype.initWorker = initWorker;
+	ProgressiveTexture.prototype.onProgress = onProgress;
+	ProgressiveTexture.prototype.onWorkerMessage = onWorkerMessage;
+	ProgressiveTexture.prototype.onLoadComplete = onLoadComplete;
+	ProgressiveTexture.prototype.onLoad = onLoad;
+	ProgressiveTexture.prototype.onDisplayComplete = onDisplayComplete;
+	ProgressiveTexture.prototype.displayComplete = displayComplete;
+	ProgressiveTexture.prototype.loadWithWorker = loadWithWorker;
+	ProgressiveTexture.prototype.isProgressiveTexture = true;
+
 	/**
 	 * @author mrdoob / http://mrdoob.com/
 	 */
@@ -20963,6 +21070,14 @@
 
 		}
 
+		function texSubImage2D() {
+		 	try {
+		 		gl.texSubImage2D.apply( gl, arguments );
+		 	} catch ( error ) {
+		 		console.error( error );
+		 	}
+		}
+
 		//
 
 		function scissor( scissor ) {
@@ -21053,6 +21168,7 @@
 			unbindTexture: unbindTexture,
 			compressedTexImage2D: compressedTexImage2D,
 			texImage2D: texImage2D,
+			texSubImage2D: texSubImage2D,
 			texImage3D: texImage3D,
 
 			scissor: scissor,
@@ -21696,26 +21812,77 @@
 
 			initTexture( textureProperties, texture );
 
-			state.activeTexture( 33984 + slot );
-			state.bindTexture( textureType, textureProperties.__webglTexture );
+			if ( !texture.isProgressiveTexture ) {
 
-			_gl.pixelStorei( 37440, texture.flipY );
-			_gl.pixelStorei( 37441, texture.premultiplyAlpha );
-			_gl.pixelStorei( 3317, texture.unpackAlignment );
+				state.activeTexture( 33984 + slot );
+				state.bindTexture( textureType, textureProperties.__webglTexture );
 
-			var needsPowerOfTwo = textureNeedsPowerOfTwo( texture ) && isPowerOfTwo( texture.image ) === false;
-			var image = resizeImage( texture.image, needsPowerOfTwo, false, maxTextureSize );
+				_gl.pixelStorei( 37440, texture.flipY );
+				_gl.pixelStorei( 37441, texture.premultiplyAlpha );
+				_gl.pixelStorei( 3317, texture.unpackAlignment );
 
-			var supportsMips = isPowerOfTwo( image ) || isWebGL2,
-				glFormat = utils.convert( texture.format ),
-				glType = utils.convert( texture.type ),
-				glInternalFormat = getInternalFormat( glFormat, glType );
+				var needsPowerOfTwo = textureNeedsPowerOfTwo( texture ) && isPowerOfTwo( texture.image ) === false;
+				var image = resizeImage( texture.image, needsPowerOfTwo, false, maxTextureSize );
 
-			setTextureParameters( textureType, texture, supportsMips );
+				var supportsMips = isPowerOfTwo( image ) || isWebGL2,
+					glFormat = utils.convert( texture.format ),
+					glType = utils.convert( texture.type ),
+					glInternalFormat = getInternalFormat( glFormat, glType );
+
+				setTextureParameters( textureType, texture, supportsMips );
+
+			}
 
 			var mipmap, mipmaps = texture.mipmaps;
 
-			if ( texture.isDepthTexture ) {
+			if ( texture.isProgressiveTexture ) {
+
+		 			if ( !texture.uploaded ) {
+		 				state.activeTexture( 33984 + slot );
+						state.bindTexture( 3553, textureProperties.__webglTexture );
+		 				_gl.pixelStorei( 37440, texture.flipY );
+						_gl.pixelStorei( 37441, texture.premultiplyAlpha );
+		 				_gl.texParameteri( 3553, 10240, 9729 );
+						_gl.texParameteri( 3553, 10241, 9987);
+						_gl.texParameteri( 3553, 10242, 33071 );
+		    			_gl.texParameteri( 3553, 10243, 33071 );
+						_gl.texImage2D( 3553, 0, 6407, texture.size, texture.size, 0, 6407, 5121, texture.data );
+						_gl.generateMipmap( 3553 );
+
+						texture.uploaded = true;
+		 			} else {
+
+			    		if ( texture.data ) {
+
+							if ( texture.data.length > 0 ) {
+		 						state.activeTexture( 33984 + slot );
+								state.bindTexture( 3553, textureProperties.__webglTexture );
+		 						_gl.pixelStorei( 37440, texture.flipY );
+								_gl.pixelStorei( 37441, texture.premultiplyAlpha );
+		 						_gl.texParameteri( 3553, 10240, 9729 );
+								_gl.texParameteri( 3553, 10241, 9987);
+								_gl.texParameteri( 3553, 10242, 33071 );
+					    		_gl.texParameteri( 3553, 10243, 33071 );
+		 			    		// console.log( texture.dataOffsetY, texture.size, texture.dataSegment );
+		 						state.texSubImage2D( 3553, 0, 0, texture.dataOffsetY, texture.size, 32, 6407, 5121, texture.data.subarray( 0, texture.dataSegment ) );
+		 						texture.data = texture.data.subarray( texture.dataSegment, texture.data.length );
+		 						texture.dataOffsetY -= 32;
+		 						_gl.generateMipmap( 3553 );
+		 						if ( texture.nPasses == 2 && texture.dataOffsetY < 0 ) {
+		 							texture.displayComplete();
+		 						} else if ( texture.loaded && texture.dataOffsetY < 0 ) {
+
+									texture.firstPassComplete = true;
+		 						}
+		 					} else {
+		 						state.activeTexture( 33984 + slot );
+								state.bindTexture( 3553, textureProperties.__webglTexture );
+		 						texture.needsUpdate = false;
+
+							}
+		 				}
+		 			}
+		 		} else if ( texture.isDepthTexture ) {
 
 				// populate depth texture with dummy data
 
@@ -21863,15 +22030,19 @@
 
 			}
 
-			if ( textureNeedsGenerateMipmaps( texture, supportsMips ) ) {
+			if ( !texture.isProgressiveTexture ) {
 
-				generateMipmap( 3553, texture, image.width, image.height );
+				if ( textureNeedsGenerateMipmaps( texture, supportsMips ) ) {
+
+					generateMipmap( 3553, texture, image.width, image.height );
+
+				}
+
+				textureProperties.__version = texture.version;
+
+				if ( texture.onUpdate ) { texture.onUpdate( texture ); }
 
 			}
-
-			textureProperties.__version = texture.version;
-
-			if ( texture.onUpdate ) { texture.onUpdate( texture ); }
 
 		}
 
@@ -32823,6 +32994,7 @@
 
 
 	var Geometries = /*#__PURE__*/Object.freeze({
+		__proto__: null,
 		WireframeGeometry: WireframeGeometry,
 		ParametricGeometry: ParametricGeometry,
 		ParametricBufferGeometry: ParametricBufferGeometry,
@@ -33851,6 +34023,7 @@
 
 
 	var Materials = /*#__PURE__*/Object.freeze({
+		__proto__: null,
 		ShadowMaterial: ShadowMaterial,
 		SpriteMaterial: SpriteMaterial,
 		RawShaderMaterial: RawShaderMaterial,
@@ -38160,6 +38333,7 @@
 
 
 	var Curves = /*#__PURE__*/Object.freeze({
+		__proto__: null,
 		ArcCurve: ArcCurve,
 		CatmullRomCurve3: CatmullRomCurve3,
 		CubicBezierCurve: CubicBezierCurve,
@@ -50495,6 +50669,7 @@
 	exports.PolyhedronGeometry = PolyhedronGeometry;
 	exports.PositionalAudio = PositionalAudio;
 	exports.PositionalAudioHelper = PositionalAudioHelper;
+	exports.ProgressiveTexture = ProgressiveTexture;
 	exports.PropertyBinding = PropertyBinding;
 	exports.PropertyMixer = PropertyMixer;
 	exports.QuadraticBezierCurve = QuadraticBezierCurve;
@@ -50654,4 +50829,4 @@
 
 	Object.defineProperty(exports, '__esModule', { value: true });
 
-}));
+})));
